@@ -23,12 +23,18 @@ SYSTEM_PROMPT = """Tu es SCOUT, expert analyste en paris sportifs.
 ÉTAPE 1 — Utilise web_search pour chercher les matchs de demain dans ces compétitions :
 - Ligue des Champions UEFA
 - Ligue 1, Premier League, Liga, Serie A, Bundesliga
+- Matchs internationaux (Équipes nationales, qualifications Coupe du Monde, UEFA Nations League, CONMEBOL, matchs amicaux internationaux)
 - NBA
 - ATP/WTA Grand Chelem et Masters
 
 ÉTAPE 2 — Pour chaque match trouvé, recherche : effectifs actuels, blessés, forme récente (5 derniers matchs), confrontations directes.
 
 ÉTAPE 3 — Analyse chaque match et génère des pronostics. Ne retourne QUE les matchs avec une confiance >= 70%.
+
+Pour chaque match, génère jusqu'à 3 pronostics de types différents :
+- 1N2 : résultat du match
+- Buteur/Scoreur : joueur qui va marquer
+- Over/Under : ex "Over 2.5 buts" ou "Under 2.5 buts" (foot), "Over 220.5 points" (basket)
 
 Réponds UNIQUEMENT avec ce JSON (tableau de pronostics) :
 [
@@ -38,12 +44,26 @@ Réponds UNIQUEMENT avec ce JSON (tableau de pronostics) :
     "competition": "Nom compétition",
     "date": "Demain HH:MM",
     "analyse": "Analyse experte 2-3 phrases avec stats récentes",
-    "pronostic": {
-      "type": "1N2" | "Buteur/Scoreur",
-      "prediction": "ex: Victoire Équipe A (1)",
-      "cote_estimee": "1.75",
-      "confiance": 85
-    },
+    "pronostics": [
+      {
+        "type": "1N2",
+        "prediction": "ex: Victoire Équipe A (1)",
+        "cote_estimee": "1.75",
+        "confiance": 85
+      },
+      {
+        "type": "Over/Under",
+        "prediction": "Over 2.5 buts",
+        "cote_estimee": "1.85",
+        "confiance": 75
+      },
+      {
+        "type": "Buteur/Scoreur",
+        "prediction": "Mbappé Buteur",
+        "cote_estimee": "2.10",
+        "confiance": 72
+      }
+    ],
     "stats_cles": ["stat 1", "stat 2"],
     "blesses": ["Joueur blessé si pertinent"],
     "verdict": "Phrase de conclusion"
@@ -80,7 +100,11 @@ async def run_scout_analysis():
 
         clean = full_text.replace("```json", "").replace("```", "").strip()
         pronostics = json.loads(clean)
-        filtered = [p for p in pronostics if p.get("pronostic", {}).get("confiance", 0) >= 70]
+        def max_confiance(p):
+            pronostics = p.get("pronostics", [p.get("pronostic", {})]) 
+            return max((pr.get("confiance", 0) for pr in pronostics), default=0)
+        
+        filtered = [p for p in pronostics if max_confiance(p) >= 70]
         logger.info(f"✅ {len(filtered)} pronostic(s) >= 70% trouvé(s)")
         return filtered
 
@@ -93,9 +117,7 @@ async def run_scout_analysis():
 # ============================================================
 def format_pronostic(p):
     sport_emoji = {"Football": "⚽", "Basketball": "🏀", "Tennis": "🎾"}.get(p.get("sport"), "🏆")
-    confiance = p.get("pronostic", {}).get("confiance", 0)
-    
-    stars = "🔥" if confiance >= 90 else "⭐⭐" if confiance >= 85 else "⭐"
+    type_emoji = {"1N2": "🏅", "Over/Under": "📈", "Buteur/Scoreur": "⚡"}
     
     msg = f"{sport_emoji} *{p.get('match', '')}*\n"
     msg += f"🏆 {p.get('competition', '')} · {p.get('date', 'Demain')}\n\n"
@@ -108,11 +130,21 @@ def format_pronostic(p):
     for s in p.get("stats_cles", []):
         msg += f"  • {s}\n"
     
-    msg += f"\n{stars} *PRONOSTIC :* {p['pronostic'].get('prediction', '')}\n"
-    msg += f"💶 *Cote estimée :* {p['pronostic'].get('cote_estimee', '?')}\n"
-    msg += f"🎯 *Confiance :* {confiance}%\n\n"
-    msg += f"_{p.get('verdict', '')}_"
+    msg += "\n"
     
+    # Gère les nouveaux pronostics multiples ET l'ancien format
+    pronostics = p.get("pronostics", [])
+    if not pronostics and p.get("pronostic"):
+        pronostics = [p.get("pronostic")]
+    
+    for prono in pronostics:
+        confiance = prono.get("confiance", 0)
+        stars = "🔥" if confiance >= 85 else "⭐"
+        emoji = type_emoji.get(prono.get("type", ""), "🎯")
+        msg += f"{stars} {emoji} *{prono.get('type', '')} :* {prono.get('prediction', '')}\n"
+        msg += f"   💶 Cote : {prono.get('cote_estimee', '?')} · 🎯 Confiance : {confiance}%\n\n"
+    
+    msg += f"_{p.get('verdict', '')}_"
     return msg
 
 def format_daily_message(pronostics):
