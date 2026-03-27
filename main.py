@@ -20,7 +20,7 @@ CHAT_ID = None  # Sera auto-détecté au premier /start
 # ============================================================
 SYSTEM_PROMPT = """Tu es SCOUT, expert analyste en paris sportifs.
 
-ÉTAPE 1 — Utilise web_search pour chercher les matchs d'aujourd'huit dans ces compétitions :
+ÉTAPE 1 — Utilise web_search pour chercher les matchs de ce soir dans ces compétitions :
 - Ligue des Champions UEFA
 - Ligue 1, Premier League, Liga, Serie A, Bundesliga
 - Matchs internationaux (Équipes nationales, qualifications Coupe du Monde, UEFA Nations League, CONMEBOL, matchs amicaux internationaux)
@@ -29,7 +29,7 @@ SYSTEM_PROMPT = """Tu es SCOUT, expert analyste en paris sportifs.
 
 ÉTAPE 2 — Pour chaque match trouvé, recherche : effectifs actuels, blessés, forme récente (5 derniers matchs), confrontations directes.
 
-ÉTAPE 3 — Analyse chaque match et génère des pronostics. Ne retourne QUE les matchs avec une confiance >= 70%.
+ÉTAPE 3 — Analyse chaque match et génère des pronostics. Ne retourne QUE les matchs avec une confiance >= 60%.
 
 Pour chaque match, génère jusqu'à 3 pronostics de types différents :
 - 1N2 : résultat du match
@@ -70,7 +70,7 @@ Réponds UNIQUEMENT avec ce JSON (tableau de pronostics) :
   }
 ]
 
-Si aucun match n'atteint 70% de confiance, retourne un tableau vide : []
+Si aucun match n'atteint 60% de confiance, retourne un tableau vide : []
 IMPORTANT: JSON uniquement, aucun texte avant ou après."""
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -80,7 +80,7 @@ logger = logging.getLogger(__name__)
 # ANALYSE SCOUT VIA API ANTHROPIC
 # ============================================================
 async def run_scout_analysis():
-    """Lance l'analyse SCOUT et retourne les pronostics >= 70%"""
+    """Lance l'analyse SCOUT et retourne les pronostics >= 60%"""
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         logger.info("🔍 SCOUT lance l'analyse des matchs de demain...")
@@ -90,7 +90,7 @@ async def run_scout_analysis():
             max_tokens=4000,
             system=SYSTEM_PROMPT,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
-            messages=[{"role": "user", "content": "Analyse les matchs de demain et donne-moi les pronostics avec 70%+ de confiance."}]
+            messages=[{"role": "user", "content": "Analyse les matchs de demain et donne-moi les pronostics avec 60%+ de confiance."}]
         )
 
         full_text = ""
@@ -104,8 +104,8 @@ async def run_scout_analysis():
             pronostics = p.get("pronostics", [p.get("pronostic", {})]) 
             return max((pr.get("confiance", 0) for pr in pronostics), default=0)
         
-        filtered = [p for p in pronostics if max_confiance(p) >= 70]
-        logger.info(f"✅ {len(filtered)} pronostic(s) >= 70% trouvé(s)")
+        filtered = [p for p in pronostics if max_confiance(p) >= 60]
+        logger.info(f"✅ {len(filtered)} pronostic(s) >= 60% trouvé(s)")
         return filtered
 
     except Exception as e:
@@ -154,13 +154,13 @@ def format_daily_message(pronostics):
         return (
             "🏆 *SCOUT — Analyse du jour*\n"
             f"📅 {now}\n\n"
-            "Aucun match n'atteint le seuil de confiance de 70% aujourd'hui.\n"
+            "Aucun match n'atteint le seuil de confiance de 60% aujourd'hui.\n"
             "SCOUT reste prudent — pas de prono forcé ! 🛡️"
         )
     
     header = (
         f"🏆 *SCOUT — Pronostics du {now}*\n"
-        f"✅ *{len(pronostics)} pronostic(s) sélectionné(s) à 70%+*\n"
+        f"✅ *{len(pronostics)} pronostic(s) sélectionné(s) à 60%+*\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
     )
     
@@ -244,7 +244,7 @@ async def status_command(update, context):
     await update.message.reply_text(
         "✅ *SCOUT est opérationnel !*\n\n"
         "🕕 Envoi automatique : chaque jour à *18h00*\n"
-        "🎯 Seuil minimum : *70% de confiance*\n"
+        "🎯 Seuil minimum : *60% de confiance*\n"
         "🌐 Données : temps réel via recherche web\n\n"
         "⚽ Foot · 🏀 Basket · 🎾 Tennis",
         parse_mode="Markdown"
@@ -258,7 +258,7 @@ async def aide_command(update, context):
         "/status — Vérifier le statut du bot\n"
         "/aide — Afficher ce message\n\n"
         "🕕 *Envoi automatique :* 18h00 chaque jour\n"
-        "🎯 *Filtre :* uniquement les pronostics ≥ 70%\n\n"
+        "🎯 *Filtre :* uniquement les pronostics ≥ 60%\n\n"
         "⚠️ _Pariez de manière responsable._",
         parse_mode="Markdown"
     )
