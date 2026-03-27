@@ -11,8 +11,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 # ============================================================
 # CONFIGURATION — Remplace par tes vraies clés
 # ============================================================
-TELEGRAM_TOKEN = "met ton tokrn ici"
-ANTHROPIC_API_KEY = "met ta cle" # sk-ant-...
+TELEGRAM_TOKEN = "8676839563:AAEfKKKJebVUrfg5ab6BBChZsmAtdPwer7Y"
+ANTHROPIC_API_KEY = "METS_TA_CLE_ANTHROPIC_ICI"  # sk-ant-...
 CHAT_ID = None  # Sera auto-détecté au premier /start
 
 # ============================================================
@@ -94,30 +94,30 @@ async def run_scout_analysis():
 def format_pronostic(p):
     sport_emoji = {"Football": "⚽", "Basketball": "🏀", "Tennis": "🎾"}.get(p.get("sport"), "🏆")
     confiance = p.get("pronostic", {}).get("confiance", 0)
-
+    
     stars = "🔥" if confiance >= 90 else "⭐⭐" if confiance >= 85 else "⭐"
-
+    
     msg = f"{sport_emoji} *{p.get('match', '')}*\n"
     msg += f"🏆 {p.get('competition', '')} · {p.get('date', 'Demain')}\n\n"
     msg += f"📊 *Analyse :*\n{p.get('analyse', '')}\n\n"
-
+    
     if p.get("blesses"):
         msg += f"🚑 *Absents :* {', '.join(p['blesses'])}\n\n"
-
+    
     msg += f"📌 *Stats clés :*\n"
     for s in p.get("stats_cles", []):
         msg += f"  • {s}\n"
-
+    
     msg += f"\n{stars} *PRONOSTIC :* {p['pronostic'].get('prediction', '')}\n"
     msg += f"💶 *Cote estimée :* {p['pronostic'].get('cote_estimee', '?')}\n"
     msg += f"🎯 *Confiance :* {confiance}%\n\n"
     msg += f"_{p.get('verdict', '')}_"
-
+    
     return msg
 
 def format_daily_message(pronostics):
     now = datetime.now().strftime("%d/%m/%Y")
-
+    
     if not pronostics:
         return (
             "🏆 *SCOUT — Analyse du jour*\n"
@@ -125,22 +125,22 @@ def format_daily_message(pronostics):
             "Aucun match n'atteint le seuil de confiance de 80% aujourd'hui.\n"
             "SCOUT reste prudent — pas de prono forcé ! 🛡️"
         )
-
+    
     header = (
         f"🏆 *SCOUT — Pronostics du {now}*\n"
         f"✅ *{len(pronostics)} pronostic(s) sélectionné(s) à 80%+*\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
     )
-
+    
     body = "\n\n━━━━━━━━━━━━━━━━━━━━━━\n\n".join(
         format_pronostic(p) for p in pronostics
     )
-
+    
     footer = (
         "\n\n━━━━━━━━━━━━━━━━━━━━━━\n"
         "⚠️ _Pariez de manière responsable. SCOUT est un outil d'aide à la décision._"
     )
-
+    
     return header + body + footer
 
 # ============================================================
@@ -150,21 +150,21 @@ async def send_daily_pronostics(context: ContextTypes.DEFAULT_TYPE = None, bot: 
     """Tâche planifiée : analyse + envoi des pronostics"""
     target_chat = chat_id or CHAT_ID
     target_bot = bot or (context.bot if context else None)
-
+    
     if not target_chat or not target_bot:
         logger.warning("⚠️ Chat ID non défini. Envoie /start au bot d'abord.")
         return
-
+    
     try:
         await target_bot.send_message(
             chat_id=target_chat,
             text="🔍 *SCOUT analyse les matchs de demain...*\n_Recherche des effectifs, blessés, forme récente — patiente 30 secondes !_",
             parse_mode="Markdown"
         )
-
+        
         pronostics = await run_scout_analysis()
         message = format_daily_message(pronostics)
-
+        
         # Découpe si message trop long
         if len(message) > 4000:
             chunks = [message[i:i+4000] for i in range(0, len(message), 4000)]
@@ -172,9 +172,9 @@ async def send_daily_pronostics(context: ContextTypes.DEFAULT_TYPE = None, bot: 
                 await target_bot.send_message(chat_id=target_chat, text=chunk, parse_mode="Markdown")
         else:
             await target_bot.send_message(chat_id=target_chat, text=message, parse_mode="Markdown")
-
+            
         logger.info(f"✅ Pronostics envoyés à {target_chat}")
-
+        
     except Exception as e:
         logger.error(f"❌ Erreur envoi: {e}")
         if target_bot and target_chat:
@@ -190,7 +190,7 @@ async def start_command(update, context):
     global CHAT_ID
     CHAT_ID = str(update.effective_chat.id)
     logger.info(f"✅ Chat ID enregistré: {CHAT_ID}")
-
+    
     await update.message.reply_text(
         "🏆 *SCOUT est en ligne !*\n\n"
         "Je t'enverrai automatiquement les meilleurs pronostics chaque soir à *18h00*.\n\n"
@@ -239,30 +239,31 @@ async def message_handler(update, context):
 # ============================================================
 # LANCEMENT DU BOT
 # ============================================================
-def main():
-    logger.info("🚀 Démarrage de SCOUT Bot...")
-
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-
-    # Commandes
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("analyse", analyse_command))
-    app.add_handler(CommandHandler("status", status_command))
-    app.add_handler(CommandHandler("aide", aide_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-
-    # Planificateur — 18h00 chaque jour
+async def post_init(application):
+    """Démarre le planificateur après l'initialisation de l'app"""
     scheduler = AsyncIOScheduler(timezone="Europe/Paris")
     scheduler.add_job(
         send_daily_pronostics,
         trigger="cron",
         hour=18,
         minute=0,
-        kwargs={"bot": app.bot, "chat_id": CHAT_ID}
+        kwargs={"bot": application.bot, "chat_id": CHAT_ID}
     )
     scheduler.start()
     logger.info("⏰ Planificateur démarré — envoi à 18h00 chaque jour")
 
+def main():
+    logger.info("🚀 Démarrage de SCOUT Bot...")
+    
+    app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
+    
+    # Commandes
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("analyse", analyse_command))
+    app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("aide", aide_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    
     logger.info("✅ SCOUT Bot est en ligne !")
     app.run_polling(drop_pending_updates=True)
 
