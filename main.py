@@ -11,9 +11,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 # ============================================================
 # CONFIGURATION
 # ============================================================
-TELEGRAM_TOKEN = "METS_TON_TOKEN_ICI"
-ANTHROPIC_API_KEY = "METS_TA_CLE_ANTHROPIC_ICI"
-API_FOOTBALL_KEY = "METS_TA_CLE_API_FOOTBALL_ICI"
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY", "")
 CHAT_ID = None
 CONFIANCE_MINIMUM = 70
 
