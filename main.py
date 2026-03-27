@@ -42,7 +42,7 @@ Réponds UNIQUEMENT avec ce JSON (tableau de pronostics) :
     "match": "Équipe A vs Équipe B",
     "sport": "Football" | "Basketball" | "Tennis",
     "competition": "Nom compétition",
-    "date": "Demain HH:MM",
+    "date": "ce soir HH:MM",
     "analyse": "Analyse experte 2-3 phrases avec stats récentes",
     "pronostics": [
       {
@@ -83,14 +83,14 @@ async def run_scout_analysis():
     """Lance l'analyse SCOUT et retourne les pronostics >= 60%"""
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        logger.info("🔍 SCOUT lance l'analyse des matchs de demain...")
+        logger.info("🔍 SCOUT lance l'analyse des matchs de ce soir...")
 
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=4000,
             system=SYSTEM_PROMPT,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
-            messages=[{"role": "user", "content": "Analyse les matchs de demain et donne-moi les pronostics avec 60%+ de confiance."}]
+            messages=[{"role": "user", "content": "Analyse les matchs de ce soir et donne-moi les pronostics avec 60%+ de confiance."}]
         )
 
         full_text = ""
@@ -120,7 +120,7 @@ def format_pronostic(p):
     type_emoji = {"1N2": "🏅", "Over/Under": "📈", "Buteur/Scoreur": "⚡"}
     
     msg = f"{sport_emoji} *{p.get('match', '')}*\n"
-    msg += f"🏆 {p.get('competition', '')} · {p.get('date', 'Demain')}\n\n"
+    msg += f"🏆 {p.get('competition', '')} · {p.get('date', 'ce soir')}\n\n"
     msg += f"📊 *Analyse :*\n{p.get('analyse', '')}\n\n"
     
     if p.get("blesses"):
@@ -190,7 +190,7 @@ async def send_daily_pronostics(context: ContextTypes.DEFAULT_TYPE = None, bot: 
     try:
         await target_bot.send_message(
             chat_id=target_chat,
-            text="🔍 *SCOUT analyse les matchs de demain...*\n_Recherche des effectifs, blessés, forme récente — patiente 30 secondes !_",
+            text="🔍 *SCOUT analyse les matchs de ce soir...*\n_Recherche des effectifs, blessés, forme récente — patiente 30 secondes !_",
             parse_mode="Markdown"
         )
         
@@ -254,7 +254,7 @@ async def aide_command(update, context):
     await update.message.reply_text(
         "📋 *Aide SCOUT*\n\n"
         "/start — Démarrer et enregistrer ce chat\n"
-        "/analyse — Analyser les matchs de demain maintenant\n"
+        "/analyse — Analyser les matchs de ce soir maintenant\n"
         "/status — Vérifier le statut du bot\n"
         "/aide — Afficher ce message\n\n"
         "🕕 *Envoi automatique :* 18h00 chaque jour\n"
