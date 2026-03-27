@@ -20,7 +20,7 @@ CHAT_ID = None  # Sera auto-détecté au premier /start
 # ============================================================
 SYSTEM_PROMPT = """Tu es SCOUT, expert analyste en paris sportifs.
 
-ÉTAPE 1 — Utilise web_search pour chercher les matchs de demain dans ces compétitions :
+ÉTAPE 1 — Utilise web_search pour chercher les matchs d'aujourd'huit dans ces compétitions :
 - Ligue des Champions UEFA
 - Ligue 1, Premier League, Liga, Serie A, Bundesliga
 - Matchs internationaux (Équipes nationales, qualifications Coupe du Monde, UEFA Nations League, CONMEBOL, matchs amicaux internationaux)
