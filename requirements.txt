@@ -1,5 +1,4 @@
 anthropic>=0.40.0
 python-telegram-bot>=20.7
 apscheduler>=3.10.4
-aiohttp
-requests
+aiohttp>=3.9.0
