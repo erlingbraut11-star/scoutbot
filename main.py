@@ -5,8 +5,7 @@ import json
 import aiohttp
 from datetime import datetime
 import anthropic
-from telegram import Bot
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ============================================================
@@ -16,160 +15,131 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY", "")
 CHAT_ID = None
-CONFIANCE_MINIMUM = 70
 
-# Suivi des alertes live pour éviter les doublons
 alertes_envoyees = {}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # ============================================================
-# =================== SCOUT CLASSIQUE ========================
+# PROMPT SCOUT
 # ============================================================
 
 SYSTEM_PROMPT = """Tu es SCOUT, expert analyste en paris sportifs.
 
-ÉTAPE 1 — Utilise web_search pour chercher les matchs de demain dans ces compétitions :
+ÉTAPE 1 — Utilise web_search pour chercher les matchs d'aujourd'hui et de demain dans ces compétitions :
 - Ligue des Champions UEFA
 - Ligue 1, Premier League, Liga, Serie A, Bundesliga
-- Matchs internationaux (Équipes nationales, qualifications Coupe du Monde, UEFA Nations League, CONMEBOL, matchs amicaux internationaux)
+- Matchs internationaux (qualifications Coupe du Monde, UEFA Nations League, matchs amicaux)
 - NBA
 - ATP/WTA Grand Chelem et Masters
 
-ÉTAPE 2 — Pour chaque match trouvé, recherche : effectifs actuels, blessés, forme récente (5 derniers matchs), confrontations directes.
+ÉTAPE 2 — Pour chaque match trouvé, recherche : effectifs actuels, blessés, forme récente (5 derniers matchs), confrontations directes, stats offensives/défensives.
 
-ÉTAPE 3 — Analyse chaque match et génère des pronostics. Ne retourne QUE les matchs avec une confiance >= 70%.
+ÉTAPE 3 — Analyse et sélectionne les 3 à 5 matchs les plus intéressants à parier. Génère pour chacun jusqu'à 2 pronostics solides.
 
-Pour chaque match, génère jusqu'à 3 pronostics de types différents :
+Pour chaque pronostic :
 - 1N2 : résultat du match
-- Buteur/Scoreur : joueur qui va marquer
-- Over/Under : ex "Over 2.5 buts" ou "Under 2.5 buts" (foot), "Over 220.5 points" (basket)
+- Over/Under buts/points
+- Buteur/Scoreur : joueur probable
 
-Réponds UNIQUEMENT avec ce JSON :
+Réponds UNIQUEMENT avec ce JSON, sans texte avant ou après :
 [
   {
     "match": "Équipe A vs Équipe B",
-    "sport": "Football" | "Basketball" | "Tennis",
+    "sport": "Football",
     "competition": "Nom compétition",
-    "date": "Demain HH:MM",
-    "analyse": "Analyse experte 2-3 phrases avec stats récentes",
+    "date": "Aujourd'hui/Demain HH:MM",
+    "analyse": "Analyse experte 2-3 phrases avec stats récentes et contexte",
     "pronostics": [
       {
         "type": "1N2",
-        "prediction": "ex: Victoire Équipe A (1)",
+        "prediction": "Victoire Équipe A",
         "cote_estimee": "1.75",
-        "confiance": 85
+        "confiance": 82
       },
       {
         "type": "Over/Under",
         "prediction": "Over 2.5 buts",
-        "cote_estimee": "1.85",
-        "confiance": 75
-      },
-      {
-        "type": "Buteur/Scoreur",
-        "prediction": "Mbappé Buteur",
-        "cote_estimee": "2.10",
-        "confiance": 72
+        "cote_estimee": "1.90",
+        "confiance": 74
       }
     ],
-    "stats_cles": ["stat 1", "stat 2"],
-    "blesses": ["Joueur blessé si pertinent"],
-    "verdict": "Phrase de conclusion"
+    "stats_cles": ["Équipe A : 4 victoires sur les 5 derniers matchs", "Équipe B : 3 blessés majeurs"],
+    "blesses": ["Nom joueur blessé si pertinent"],
+    "verdict": "Phrase de conclusion sur le meilleur pari"
   }
-]
+]"""
 
-Si aucun match n'atteint 70% de confiance, retourne : []
-JSON uniquement, aucun texte avant ou après."""
 
 async def run_scout_analysis():
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        logger.info("🔍 SCOUT analyse les matchs de demain...")
+        logger.info("🔍 SCOUT analyse les matchs...")
+
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=4000,
             system=SYSTEM_PROMPT,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
-            messages=[{"role": "user", "content": "Analyse les matchs de demain et donne-moi les pronostics avec 70%+ de confiance."}]
+            messages=[{"role": "user", "content": "Analyse les matchs d'aujourd'hui et de demain. Donne-moi les meilleurs pronostics."}]
         )
+
         full_text = "".join(b.text for b in response.content if hasattr(b, "text"))
         clean = full_text.replace("```json", "").replace("```", "").strip()
         pronostics = json.loads(clean)
+        logger.info(f"✅ {len(pronostics)} pronostic(s) générés")
+        return pronostics
 
-        def max_confiance(p):
-            pros = p.get("pronostics", [p.get("pronostic", {})])
-            return max((pr.get("confiance", 0) for pr in pros), default=0)
-
-        filtered = [p for p in pronostics if max_confiance(p) >= CONFIANCE_MINIMUM]
-        logger.info(f"✅ {len(filtered)} pronostic(s) >= {CONFIANCE_MINIMUM}% trouvé(s)")
-        return filtered
     except Exception as e:
         logger.error(f"❌ Erreur analyse SCOUT: {e}")
         return []
 
+
 def format_pronostic(p):
     sport_emoji = {"Football": "⚽", "Basketball": "🏀", "Tennis": "🎾"}.get(p.get("sport"), "🏆")
     type_emoji = {"1N2": "🏅", "Over/Under": "📈", "Buteur/Scoreur": "⚡"}
+
     msg = f"{sport_emoji} *{p.get('match', '')}*\n"
-    msg += f"🏆 {p.get('competition', '')} · {p.get('date', 'Demain')}\n\n"
+    msg += f"🏆 {p.get('competition', '')} · {p.get('date', '')}\n\n"
     msg += f"📊 *Analyse :*\n{p.get('analyse', '')}\n\n"
+
     if p.get("blesses"):
         msg += f"🚑 *Absents :* {', '.join(p['blesses'])}\n\n"
+
     msg += "📌 *Stats clés :*\n"
     for s in p.get("stats_cles", []):
         msg += f"  • {s}\n"
     msg += "\n"
-    pronostics = p.get("pronostics", [])
-    if not pronostics and p.get("pronostic"):
-        pronostics = [p.get("pronostic")]
-    for prono in pronostics:
+
+    for prono in p.get("pronostics", []):
         confiance = prono.get("confiance", 0)
-        stars = "🔥" if confiance >= 85 else "⭐"
+        stars = "🔥" if confiance >= 80 else "⭐"
         emoji = type_emoji.get(prono.get("type", ""), "🎯")
         msg += f"{stars} {emoji} *{prono.get('type', '')} :* {prono.get('prediction', '')}\n"
-        msg += f"   💶 Cote : {prono.get('cote_estimee', '?')} · 🎯 {confiance}%\n\n"
+        msg += f"   💶 Cote : {prono.get('cote_estimee', '?')} · 🎯 Confiance : {confiance}%\n\n"
+
     msg += f"_{p.get('verdict', '')}_"
     return msg
 
-def format_daily_message(pronostics):
-    now = datetime.now().strftime("%d/%m/%Y")
+
+def format_message(pronostics):
+    now = datetime.now().strftime("%d/%m/%Y %H:%M")
     if not pronostics:
         return (
-            "🏆 *SCOUT — Analyse du jour*\n"
+            "🏆 *SCOUT — Analyse terminée*\n"
             f"📅 {now}\n\n"
-            f"Aucun match n'atteint le seuil de {CONFIANCE_MINIMUM}% aujourd'hui.\n"
-            "SCOUT reste prudent — pas de prono forcé ! 🛡️"
+            "Aucun match intéressant trouvé pour le moment.\nRéessaie plus tard ! 🛡️"
         )
     header = (
         f"🏆 *SCOUT — Pronostics du {now}*\n"
-        f"✅ *{len(pronostics)} pronostic(s) sélectionné(s) à {CONFIANCE_MINIMUM}%+*\n"
+        f"✅ *{len(pronostics)} match(s) analysé(s)*\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
     )
     body = "\n\n━━━━━━━━━━━━━━━━━━━━━━\n\n".join(format_pronostic(p) for p in pronostics)
     footer = "\n\n━━━━━━━━━━━━━━━━━━━━━━\n⚠️ _Pariez de manière responsable._"
     return header + body + footer
 
-async def send_daily_pronostics(bot=None, chat_id=None):
-    target_chat = chat_id or CHAT_ID
-    if not target_chat or not bot:
-        return
-    try:
-        await bot.send_message(
-            chat_id=target_chat,
-            text="🔍 *SCOUT analyse les matchs de demain...*\n_Patiente 30 secondes !_",
-            parse_mode="Markdown"
-        )
-        pronostics = await run_scout_analysis()
-        message = format_daily_message(pronostics)
-        if len(message) > 4000:
-            for chunk in [message[i:i+4000] for i in range(0, len(message), 4000)]:
-                await bot.send_message(chat_id=target_chat, text=chunk, parse_mode="Markdown")
-        else:
-            await bot.send_message(chat_id=target_chat, text=message, parse_mode="Markdown")
-    except Exception as e:
-        logger.error(f"❌ Erreur envoi pronostics: {e}")
 
 # ============================================================
 # ====================== SCOUT LIVE ==========================
@@ -193,7 +163,7 @@ Réponds UNIQUEMENT avec ce JSON :
   "analyse": "Analyse de la situation actuelle en 2-3 phrases",
   "opportunites": [
     {
-      "type": "Prochain buteur" | "Over/Under" | "Résultat final" | "Mi-temps/Full time",
+      "type": "Prochain buteur",
       "prediction": "ex: Over 2.5 buts",
       "raisonnement": "Pourquoi ce pari est intéressant maintenant",
       "cote_estimee": "1.85",
@@ -202,15 +172,15 @@ Réponds UNIQUEMENT avec ce JSON :
   ],
   "verdict": "Phrase de conclusion"
 }
+JSON uniquement, aucun texte avant ou après."""
 
-Ne retourne QUE les opportunités avec confiance >= 70%.
-Si aucune opportunité, retourne opportunites: []
-JSON uniquement."""
 
 async def get_live_matches():
+    if not API_FOOTBALL_KEY:
+        return []
+    url = "https://v3.football.api-sports.io/fixtures?live=all"
+    headers = {"x-apisports-key": API_FOOTBALL_KEY}
     try:
-        url = "https://v3.football.api-sports.io/fixtures?live=all"
-        headers = {"x-apisports-key": API_FOOTBALL_KEY}
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as resp:
                 data = await resp.json()
@@ -220,6 +190,7 @@ async def get_live_matches():
     except Exception as e:
         logger.error(f"❌ Erreur API-Football: {e}")
         return []
+
 
 def format_match_data(match):
     fixture = match.get("fixture", {})
@@ -237,6 +208,7 @@ def format_match_data(match):
         "mi_temps": f"{halftime.get('home', '?')}-{halftime.get('away', '?')}",
     }
 
+
 async def analyze_live_match(match_data):
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -247,7 +219,7 @@ Minute : {match_data['minute']}'
 Score : {match_data['score']}
 Mi-temps : {match_data['mi_temps']}
 
-Utilise web_search pour trouver les stats live (possession, tirs, corners, cartons) et génère les opportunités de paris ≥ 70%."""
+Utilise web_search pour trouver les stats live (possession, tirs, corners, cartons) et génère les meilleures opportunités de paris."""
 
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
@@ -258,12 +230,11 @@ Utilise web_search pour trouver les stats live (possession, tirs, corners, carto
         )
         full_text = "".join(b.text for b in response.content if hasattr(b, "text"))
         clean = full_text.replace("```json", "").replace("```", "").strip()
-        result = json.loads(clean)
-        result["opportunites"] = [o for o in result.get("opportunites", []) if o.get("confiance", 0) >= CONFIANCE_MINIMUM]
-        return result
+        return json.loads(clean)
     except Exception as e:
         logger.error(f"❌ Erreur analyse live: {e}")
         return None
+
 
 def format_live_alert(analysis, match_data):
     type_emoji = {"Prochain buteur": "⚡", "Over/Under": "📈", "Résultat final": "🏅", "Mi-temps/Full time": "🔄"}
@@ -275,7 +246,7 @@ def format_live_alert(analysis, match_data):
     for opp in analysis.get("opportunites", []):
         emoji = type_emoji.get(opp.get("type", ""), "🎯")
         confiance = opp.get("confiance", 0)
-        stars = "🔥" if confiance >= 85 else "⭐"
+        stars = "🔥" if confiance >= 80 else "⭐"
         msg += f"{stars} {emoji} *{opp.get('type', '')}*\n"
         msg += f"   📌 {opp.get('prediction', '')}\n"
         msg += f"   💬 {opp.get('raisonnement', '')}\n"
@@ -283,6 +254,7 @@ def format_live_alert(analysis, match_data):
     msg += f"━━━━━━━━━━━━━━━━━━━━━━\n_{analysis.get('verdict', '')}_\n\n"
     msg += "⚠️ _Pariez de manière responsable._"
     return msg
+
 
 async def scan_live_matches(bot=None, chat_id=None):
     target_chat = chat_id or CHAT_ID
@@ -310,6 +282,7 @@ async def scan_live_matches(bot=None, chat_id=None):
                 logger.error(f"❌ Erreur envoi live: {e}")
         await asyncio.sleep(5)
 
+
 # ============================================================
 # =================== COMMANDES TELEGRAM =====================
 # ============================================================
@@ -319,22 +292,31 @@ async def start_command(update, context):
     CHAT_ID = str(update.effective_chat.id)
     await update.message.reply_text(
         "🏆 *SCOUT est en ligne !*\n\n"
-        "📅 *Pronostics du jour :* envoi automatique à *18h00*\n"
-        "🔴 *Live betting :* surveillance toutes les *10 minutes*\n\n"
         "📋 *Commandes :*\n"
-        "/analyse — Pronostics de demain maintenant\n"
-        "/live — Scanner les matchs en direct maintenant\n"
+        "/prono — Meilleurs pronostics du moment\n"
+        "/live — Scanner les matchs en direct\n"
         "/status — Vérifier que SCOUT fonctionne\n"
         "/aide — Afficher l'aide\n\n"
-        f"🎯 Seuil de confiance : {CONFIANCE_MINIMUM}%\n"
-        "⚽🏀🎾 Prêt à gagner !",
+        "⚽🏀🎾 Prêt à analyser !",
         parse_mode="Markdown"
     )
 
-async def analyse_command(update, context):
+
+async def prono_command(update, context):
     global CHAT_ID
     CHAT_ID = str(update.effective_chat.id)
-    await send_daily_pronostics(bot=context.bot, chat_id=CHAT_ID)
+    await update.message.reply_text(
+        "🔍 *SCOUT analyse les matchs...*\n_Patiente 30 secondes !_",
+        parse_mode="Markdown"
+    )
+    pronostics = await run_scout_analysis()
+    message = format_message(pronostics)
+    if len(message) > 4000:
+        for chunk in [message[i:i+4000] for i in range(0, len(message), 4000)]:
+            await update.message.reply_text(chunk, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(message, parse_mode="Markdown")
+
 
 async def live_command(update, context):
     global CHAT_ID
@@ -345,35 +327,35 @@ async def live_command(update, context):
     )
     await scan_live_matches(bot=context.bot, chat_id=CHAT_ID)
 
+
 async def status_command(update, context):
     await update.message.reply_text(
         "✅ *SCOUT est opérationnel !*\n\n"
-        "📅 Pronostics : *18h00 chaque jour*\n"
         "🔴 Live betting : *toutes les 10 minutes*\n"
-        f"🎯 Seuil : *{CONFIANCE_MINIMUM}%*\n"
         "🌐 Données : temps réel\n\n"
         "⚽ Foot · 🏀 Basket · 🎾 Tennis",
         parse_mode="Markdown"
     )
 
+
 async def aide_command(update, context):
     await update.message.reply_text(
         "📋 *Aide SCOUT*\n\n"
         "/start — Démarrer SCOUT\n"
-        "/analyse — Pronostics des matchs de demain\n"
+        "/prono — Meilleurs pronostics du moment\n"
         "/live — Scanner les matchs en direct\n"
         "/status — Vérifier le statut\n"
         "/aide — Ce message\n\n"
-        "📅 *Automatique :* pronostics à 18h + live toutes les 10 min\n"
-        f"🎯 *Seuil :* {CONFIANCE_MINIMUM}%\n\n"
         "⚠️ _Pariez de manière responsable._",
         parse_mode="Markdown"
     )
 
+
 async def message_handler(update, context):
     await update.message.reply_text(
-        "Utilise /analyse pour les pronostics ou /live pour le direct ! 🏆"
+        "Utilise /prono pour les pronostics ou /live pour le direct ! 🏆"
     )
+
 
 # ============================================================
 # =================== PLANIFICATEUR ==========================
@@ -381,15 +363,6 @@ async def message_handler(update, context):
 
 async def post_init(application):
     scheduler = AsyncIOScheduler(timezone="Europe/Paris")
-
-    # Pronostics quotidiens à 18h
-    scheduler.add_job(
-        send_daily_pronostics,
-        trigger="cron",
-        hour=18,
-        minute=0,
-        kwargs={"bot": application.bot, "chat_id": CHAT_ID}
-    )
 
     # Scan live toutes les 10 minutes
     scheduler.add_job(
@@ -400,19 +373,21 @@ async def post_init(application):
     )
 
     scheduler.start()
-    logger.info("⏰ Planificateur : pronostics 18h + live toutes les 10 min")
+    logger.info("⏰ Planificateur : scan live toutes les 10 min")
+
 
 def main():
     logger.info("🚀 Démarrage de SCOUT...")
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("analyse", analyse_command))
+    app.add_handler(CommandHandler("prono", prono_command))
     app.add_handler(CommandHandler("live", live_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("aide", aide_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
     logger.info("✅ SCOUT est en ligne !")
     app.run_polling(drop_pending_updates=True)
+
 
 if __name__ == "__main__":
     main()
